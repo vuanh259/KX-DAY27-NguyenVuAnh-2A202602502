@@ -37,13 +37,13 @@ import time
 import uuid
 
 from dotenv import load_dotenv
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from rich.console import Console
 from rich.panel import Panel
 
-from common.db import db_path, write_audit_event
+from common.db import write_audit_event
+from exercises.checkpoints import open_checkpointer
 from common.github import fetch_pr, post_review_comment
 from common.llm import get_llm
 from exercises.review_prompts import REVIEW_SYSTEM, refinement_messages
@@ -329,8 +329,7 @@ async def run(pr_url: str, thread_id: str | None):
     console.print(f"[dim]PR: {pr_url}[/dim]")
     console.print(f"[dim]thread_id = {thread_id}[/dim]\n")
 
-    async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
-        await cp.setup()
+    async with open_checkpointer() as cp:
         app = build_graph(cp)
         cfg = {"configurable": {"thread_id": thread_id}}
 

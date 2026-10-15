@@ -6,7 +6,7 @@ Python 3.12, dependency cài bằng uv theo `uv.lock`.
 
 ```text
 python -m unittest discover -s tests -v
-Ran 7 tests
+Ran 13 tests
 OK
 ```
 
@@ -56,5 +56,34 @@ Repo private `VinUni-AI20k/PR-Demo` của lớp chưa truy cập được với 
 nên hai draft PR trong repo cá nhân được dùng thay thế theo yêu cầu người dùng.
 Điều kiện chạy đúng hai PR chuẩn của lớp còn phụ thuộc quyền truy cập repo đó.
 
-Form nộp bài VLearn đang báo cần đăng nhập bằng tài khoản học viên đã được cấp.
-Code hoàn tất và việc nộp trên VLearn là hai trạng thái riêng biệt.
+Người dùng đã đăng nhập lại VLearn; form nộp bài hiện truy cập được.
+Trạng thái nộp cuối cùng được xác minh riêng trên VLearn.
+
+
+## Kiểm thử bốn bonus
+
+Sáu test bổ sung trong `tests/test_bonuses.py` kiểm tra:
+
+- Edit gửi đúng feedback/diff/review cũ tới LLM và không đăng trước lần duyệt mới.
+- Hai task Send có interrupt riêng, đóng/mở checkpoint giữa các câu trả lời;
+  một câu trả lời chưa được synthesize hoặc đăng; đủ hai mới tổng hợp đúng một lần.
+- Fork checkpoint vào thread mới, chọn quyết định khác mà source không đổi;
+  từ chối ghi đè thread có sẵn và từ chối fork checkpoint không chờ duyệt.
+- Calibration chỉ đếm quyết định cuối, không đếm trùng Edit và pending.
+- UI Edit và UI hai reviewer chạy đủ các lượt form.
+
+Đã thử thêm với LLM/GitHub thật từ checkpoint cũ:
+
+- Source `live-demo-2c056281-ce63-4ec7-be9d-b52600f8f50d`: kết quả giữ `rejected`.
+- Fork `live-bonus-time-travel-edit`: Edit yêu cầu sửa nhận xét sai; LLM trả
+  confidence 75% và chỉ còn đề xuất, vẫn dừng chờ duyệt lại dù vượt ngưỡng auto.
+- Sau Approve, fork có kết quả `committed`; audit chứa `time_travel`, `rewrite`,
+  `edit`, `approve`, `commit`. Calibration có thêm quyết định approve mới.
+
+Fan-out đã kiểm thử bằng graph/checkpoint/UI thật với LLM/GitHub giả lập;
+không khẳng định có hai người thật tham gia review.
+
+Toàn bộ 13 test cũng đã chạy qua với `LANGGRAPH_STRICT_MSGPACK=true`.
+Checkpointer đăng ký rõ hai kiểu Pydantic của lab trong
+`exercises/checkpoints.py`, nên đọc lại checkpoint không phụ thuộc chế độ
+deserialize permissive của LangGraph.

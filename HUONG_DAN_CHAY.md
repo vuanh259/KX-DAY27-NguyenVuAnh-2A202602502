@@ -42,9 +42,9 @@ Mở `http://localhost:8501`, nhập URL PR và bấm **Run review**.
 - 0.58 ≤ confidence < 0.73: hiện diff, lý do và Approve / Reject / Edit.
 - Confidence < 0.58: hỏi reviewer, phân tích lại với câu trả lời rồi đăng review.
 
-Approve đăng comment thật dưới tài khoản tương ứng với PAT. Reject và Edit
-không đăng; Edit lưu feedback như yêu cầu cơ bản của Lab. Viết lại review khi
-Edit là bài bonus. Confidence do LLM tự báo cáo nên nhánh của PR thật có thể
+Approve đăng comment thật dưới tài khoản tương ứng với PAT. Reject không đăng.
+Trong UI tích hợp, Edit gọi LLM viết lại theo feedback rồi yêu cầu duyệt lại.
+Exercise 2–4 cơ bản giữ hành vi Edit lưu feedback và bỏ qua đăng. Confidence do LLM tự báo cáo nên nhánh của PR thật có thể
 khác giữa các lần chạy.
 
 ## Audit và mở lại phiên
@@ -70,3 +70,17 @@ Repo đích: https://github.com/vuanh259/KX-DAY27-NguyenVuAnh-2A202602502
 
 Sau khi chạy thử PR thật thành công, commit/push lời giải và nộp link repo lên
 VLearn. Kiểm tra repo Public và không có `.env` hoặc database trong commit.
+
+
+## Bonus trong giao diện
+
+- **Edit:** điền feedback, bấm Edit, đọc review mới rồi Approve hoặc Reject.
+- **Hai reviewer:** điền `reviewer-a, reviewer-b` trong ô reviewer trước khi chạy.
+  Nếu nhánh escalation xảy ra, phải trả lời đủ hai form mới tổng hợp. Các ID
+  chỉ là nhãn cục bộ trong lab, không phải hệ thống đăng nhập cho reviewer.
+- **Time travel:** mở expander checkpoint, chọn snapshot chờ duyệt, tạo phiên
+  fork riêng rồi thử quyết định khác. Phiên gốc không bị thay đổi.
+- **Calibration:** mở expander calibration để xem confidence trung bình và tỷ
+  lệ approve từ quyết định cuối mỗi phiên; dữ liệu ít chỉ mang tính minh hoạ.
+
+Xem README để dùng CLI bonus và xem `KIEM_THU.md` để đối chiếu kết quả chạy.

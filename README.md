@@ -1,4 +1,4 @@
-﻿# Day27 — HITL PR Review Agent
+# Day27 — HITL PR Review Agent
 
 Lời giải Lab Track 3: agent review pull request bằng LangGraph, giao diện duyệt
 Streamlit và audit trail SQLite. Đã hoàn thiện bốn exercise cùng `app.py`.
@@ -52,8 +52,9 @@ lỗi với đề xuất. Kết quả LLM vẫn cần được kiểm tra.
 Ngưỡng import từ `common/schemas.py`. Confidence là điểm LLM tự báo cáo,
 không phải xác suất đã hiệu chỉnh và không bảo đảm PR không có lỗi.
 
-Approve đăng comment thật. Reject không đăng. Edit lưu feedback và bỏ qua đăng,
-đúng yêu cầu cơ bản Exercise 2; tự viết lại khi Edit là bonus chưa triển khai.
+Approve đăng comment thật. Reject không đăng. Trong UI tích hợp, Edit dùng feedback
+để LLM viết lại review và luôn chờ duyệt lại, kể cả confidence mới >= 0.73.
+Các exercise cơ bản giữ hành vi ban đầu: Edit lưu feedback và bỏ qua đăng.
 Nhánh escalation đăng sau khi nhận câu trả lời theo hướng dẫn VLearn.
 
 ```mermaid
@@ -121,3 +122,44 @@ Bộ kiểm thử chạy graph và SQLite thật, giả lập GitHub/LLM, kiểm
 
 Kết quả chạy thật và link comment: [KIEM_THU.md](KIEM_THU.md).
 Hướng dẫn tiếng Việt: [HUONG_DAN_CHAY.md](HUONG_DAN_CHAY.md).
+
+
+## Bốn bonus đã hoàn thiện
+
+Code nằm trong `bonuses/`, được dùng bởi `app.py`; Exercise 1–4 giữ độc lập.
+
+1. **Time travel.** Mở expander **Bonus: checkpoint history and time travel**,
+   chọn checkpoint chờ duyệt và bấm **Fork checkpoint into a new session**.
+   Phiên mới dùng snapshot cũ, không fetch lại PR/LLM ban đầu, và chờ một quyết
+   định mới. Phiên gốc giữ nguyên. Chỉ fork checkpoint `human_approval`; không
+   replay các checkpoint sắp tự đăng hoặc fan-out đang dở. Nếu approve phiên
+   mới, GitHub có thể nhận thêm một comment mới.
+2. **Confidence calibration.** Expander calibration báo số phiên, confidence
+   trung bình, tỷ lệ approve và độ chênh theo ba khoảng confidence. Chỉ dùng
+   quyết định approve/reject cuối cùng mỗi phiên; không đếm trùng pending hoặc
+   retry, loại Edit chưa được quyết định tiếp. Đây là thống kê mô tả: approve
+   của người dùng là proxy, không phải nhãn correctness chuẩn; mẫu ít chưa đủ
+   kết luận model được hiệu chỉnh tốt hay kém.
+3. **Multi-reviewer fan-out.** Nhập hai reviewer ID khác nhau, ngăn cách bằng
+   dấu phẩy, trước khi Run review. Khi confidence thấp, graph dùng `Send` tạo
+   hai task có interrupt ID riêng, checkpoint từng câu trả lời, rồi chỉ
+   synthesize sau khi cả hai trả lời. UI hiển thị lần lượt hai form, giữ tên
+   reviewer trong Q&A và audit. Đây là reviewer label cục bộ phục vụ lab, không
+   gửi thư mời/thông báo và không cung cấp xác thực danh tính. Câu trả lời khác
+   nhau được giữ nguyên để model cân nhắc.
+4. **Auto-edit.** Nhập feedback rồi bấm Edit. Node rewrite gọi LLM bằng diff,
+   review cũ và feedback; kết quả mới được hiển thị tại một interrupt duyệt mới.
+   Không đăng trong lúc viết lại; Approve mới đăng, Reject thì dừng. Mọi lần
+   rewrite và duyệt lại đều có audit.
+
+CLI hỗ trợ kiểm tra bonus:
+
+```powershell
+uv run python -m bonuses history --thread <thread_id>
+uv run python -m bonuses calibration
+uv run python -m bonuses fork --thread <source_thread> --checkpoint <checkpoint_id> --new-thread <new_thread>
+```
+
+Sau khi fork bằng CLI, mở phiên mới từ Recent sessions trong UI. So sánh hai
+kết quả bằng history hoặc `audit.replay` với source/new thread. Thread fork có
+`forked_from` và một dòng audit `time_travel` ghi nguồn snapshot.

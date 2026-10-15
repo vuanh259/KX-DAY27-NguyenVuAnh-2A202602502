@@ -4,11 +4,12 @@ import asyncio
 import uuid
 import streamlit as st
 from dotenv import load_dotenv
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
-from common.db import db_conn, db_path
+from common.db import db_conn
+from exercises.checkpoints import open_checkpointer
 from common.github import parse_pr_url
-from exercises.exercise_4_audit import build_graph
+from bonuses.workflow import build_graph
+from bonuses.tools import calibration, fork_checkpoint, history
 
 async def recent_sessions():
     async with db_conn() as conn:
@@ -21,9 +22,8 @@ async def recent_sessions():
         ''') as cur:
             return [dict(row) for row in await cur.fetchall()]
 
-async def run_graph(pr_url: str, thread_id: str, resume_value=None):
-    async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
-        await cp.setup()
+async def run_graph(pr_url: str, thread_id: str, resume_value=None, reviewer_ids=None, interrupt_id=None):
+    async with open_checkpointer() as cp:
         graph = build_graph(cp)
         cfg = {'configurable': {'thread_id': thread_id}}
         saved = await graph.aget_state(cfg)
@@ -32,16 +32,26 @@ async def run_graph(pr_url: str, thread_id: str, resume_value=None):
         if resume_value is not None:
             if not saved.next:
                 raise ValueError('This session is not waiting for a response')
-            return await graph.ainvoke(Command(resume=resume_value), cfg)
+            pending = [item for task in saved.tasks for item in task.interrupts]
+            selected = interrupt_id or (pending[0].id if pending else None)
+            if selected not in {item.id for item in pending}:
+                raise ValueError('This reviewer request is stale; reopen the session')
+            return await graph.ainvoke(Command(resume={selected: resume_value}), cfg)
         if saved.next:
             return await graph.ainvoke(None, cfg)
         if saved.values:
             return saved.values
-        return await graph.ainvoke({'pr_url': pr_url, 'thread_id': thread_id}, cfg)
+        reviewers = reviewer_ids or []
+        if reviewers and (len(reviewers) != 2 or len(set(reviewers)) != 2):
+            raise ValueError('Enter two distinct reviewer IDs or leave the field empty')
+        return await graph.ainvoke({'pr_url': pr_url, 'thread_id': thread_id,
+                                    'reviewer_ids': reviewers}, cfg)
 
 def remember(result):
     pending = result.get('__interrupt__')
     st.session_state.interrupt_payload = pending[0].value if pending else None
+    st.session_state.interrupt_id = pending[0].id if pending else None
+    st.session_state.pending_reviewers = len(pending or [])
     st.session_state.final = None if pending else result
 
 def render_approval_card(payload):
@@ -53,21 +63,27 @@ def render_approval_card(payload):
     with st.expander('Diff'):
         st.code(payload.get('diff_preview', ''), language='diff')
     feedback = st.text_area('Feedback (optional)', key=f'feedback_{st.session_state.thread_id}')
-    st.caption('Edit records feedback and skips posting, as in Exercise 2.')
+    st.caption('Edit asks the LLM to rewrite using your feedback, then asks you to approve again.')
     columns = st.columns(3)
     for col, choice in zip(columns, ('approve', 'reject', 'edit')):
         if col.button(choice.title(), type='primary' if choice == 'approve' else 'secondary'):
+            if choice == 'edit' and not feedback.strip():
+                st.warning('Enter feedback before choosing Edit.')
+                return None
             return {'choice': choice, 'feedback': feedback}
     return None
 
 def render_escalation_card(payload):
     st.subheader(f"Strong escalation — confidence {payload['confidence']:.0%}")
     st.caption(payload['confidence_reasoning'])
+    if payload.get('reviewer_id'):
+        st.info(f"Answering as {payload['reviewer_id']}; both reviewers must respond before synthesis.")
     st.markdown(payload['summary'])
     for risk in payload.get('risk_factors', []):
         st.error(risk)
-    with st.form(f'escalation_{st.session_state.thread_id}'):
-        answers = {q: st.text_input(q, key=f'answer_{st.session_state.thread_id}_{i}')
+    suffix = f"{st.session_state.thread_id}_{payload.get('reviewer_id', 'single')}"
+    with st.form(f'escalation_{suffix}'):
+        answers = {q: st.text_input(q, key=f'answer_{suffix}_{i}')
                    for i, q in enumerate(payload['questions'])}
         if st.form_submit_button('Submit answers'):
             if all(a.strip() for a in answers.values()):
@@ -75,10 +91,11 @@ def render_escalation_card(payload):
             st.warning('Please answer every question.')
     return None
 
-def drive(resume_value=None):
+def drive(resume_value=None, reviewer_ids=None):
     try:
         with st.spinner('Reviewing PR...'):
-            remember(asyncio.run(run_graph(st.session_state.pr_url, st.session_state.thread_id, resume_value)))
+            remember(asyncio.run(run_graph(st.session_state.pr_url, st.session_state.thread_id,
+                resume_value, reviewer_ids, st.session_state.get('interrupt_id') if resume_value is not None else None)))
         return True
     except Exception as error:
         st.error(f'Review failed: {error}')
@@ -119,10 +136,15 @@ def main():
     with st.form('start'):
         pr_url = st.text_input('PR URL', value=st.session_state.pr_url,
             placeholder='https://github.com/VinUni-AI20k/PR-Demo/pull/1')
+        reviewer_text = st.text_input('Two reviewer IDs for escalation (optional, comma separated)',
+            help='Local lab reviewer labels; no invitations or messages are sent. Not an authentication system.')
         submitted = st.form_submit_button('Run review')
     if submitted:
         try:
             parse_pr_url(pr_url.strip())
+            reviewer_ids = [r.strip() for r in reviewer_text.split(',') if r.strip()]
+            if reviewer_ids and (len(reviewer_ids) != 2 or len(set(reviewer_ids)) != 2):
+                raise ValueError('Enter two distinct reviewer IDs or leave the field empty')
         except ValueError as error:
             st.error(str(error))
         else:
@@ -132,7 +154,7 @@ def main():
             st.session_state.final = None
             st.query_params['thread'] = st.session_state.thread_id
             st.query_params['pr'] = st.session_state.pr_url
-            drive()
+            drive(reviewer_ids=reviewer_ids)
     payload = st.session_state.interrupt_payload
     if payload:
         if payload['kind'] == 'approval_request':
@@ -161,6 +183,40 @@ def main():
             st.markdown(final['analysis'].summary)
         st.caption(f'thread_id = {st.session_state.thread_id}')
         st.code(f'uv run python -m audit.replay --thread {st.session_state.thread_id}')
+    render_bonus_tools()
+
+
+def render_bonus_tools():
+    with st.expander('Bonus: confidence calibration'):
+        st.caption('Final explicit approve/reject per session; pending edits and automatic decisions excluded. '
+                   'Human approval is a proxy, not ground truth; small samples are inconclusive.')
+        rows = asyncio.run(calibration())
+        if rows:
+            st.dataframe(rows, hide_index=True)
+        else:
+            st.info('No completed human decisions yet.')
+    if st.session_state.thread_id:
+        with st.expander('Bonus: checkpoint history and time travel'):
+            rows = asyncio.run(history(st.session_state.thread_id))
+            if rows:
+                st.dataframe(rows, hide_index=True)
+                eligible = [r for r in rows if r['can_fork']]
+                if eligible:
+                    selected = st.selectbox('Approval checkpoint to fork', eligible,
+                        format_func=lambda row: f"{row['created_at']} | {row['checkpoint_id'][-8:]}")
+                    st.caption('Creates a separate session to try another decision. The original session is preserved. '
+                               'Approving the new session can post another comment.')
+                    if st.button('Fork checkpoint into a new session'):
+                        created = asyncio.run(fork_checkpoint(st.session_state.thread_id,
+                            selected['checkpoint_id'], 'fork-' + str(uuid.uuid4())))
+                        st.session_state.thread_id = created['thread_id']
+                        st.session_state.pr_url = created['pr_url']
+                        st.session_state.interrupt_payload = None
+                        st.session_state.final = None
+                        st.query_params['thread'] = created['thread_id']
+                        st.query_params['pr'] = created['pr_url']
+                        if drive():
+                            st.rerun()
 
 if __name__ == '__main__':
     main()
