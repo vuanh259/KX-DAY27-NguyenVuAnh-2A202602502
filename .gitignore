@@ -27,3 +27,6 @@ Thumbs.db
 *.sqlite
 *.db
 scratch/
+.uv-cache/
+*.db-wal
+*.db-shm
